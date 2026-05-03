@@ -28,6 +28,8 @@ def get_client() -> Client:
     if _client is None:
         url = os.environ.get("SUPABASE_URL", "")
         key = os.environ.get("SUPABASE_SECRET_KEY", "")
+        print(f"[db] SUPABASE_URL={'SET('+url[:20]+')' if url else 'MISSING'}")
+        print(f"[db] SUPABASE_SECRET_KEY={'SET' if key else 'MISSING'}")
         _client = create_client(url, key)
     return _client
 
