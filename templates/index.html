@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Card Scanner</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: { zinc: { 950: '#09090b' } },
+      animation: {
+        'fade-in': 'fadeIn 0.3s ease-out',
+        'slide-up': 'slideUp 0.35s ease-out',
+      },
+      keyframes: {
+        fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
+        slideUp: { '0%': { transform: 'translateY(100%)' }, '100%': { transform: 'translateY(0)' } },
+      },
+    },
+  },
+}
+</script>
+<style>
+  body { background: #09090b; }
+  input[type=file] { display: none; }
+  * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: #18181b; }
+  ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 2px; }
+</style>
+</head>
+<body class="bg-[#09090b] text-[#fafafa] min-h-screen">
+<div id="root"></div>
+
+{% raw %}<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── Constants ────────────────────────────────────────────────────────────────
+const DEFAULT_FIELDS = [
+  {key:"grader",        label:"Grader",             enabled:true},
+  {key:"grade",         label:"Grade",              enabled:true},
+  {key:"cert_number",   label:"Cert Number",        enabled:true},
+  {key:"year",          label:"Year",               enabled:true},
+  {key:"player_name",   label:"Player",             enabled:true},
+  {key:"set_name",      label:"Set / Manufacturer", enabled:true},
+  {key:"card_number",   label:"Card #",             enabled:true},
+  {key:"variation",     label:"Variation",          enabled:true},
+  {key:"sport_category",label:"Sport",              enabled:true},
+  {key:"purchase_price",label:"Purchase Price",     enabled:true},
+  {key:"value",         label:"Value",              enabled:true},
+  {key:"sold_price",    label:"Sold Price",         enabled:true},
+  {key:"sold_date",     label:"Sold Date",          enabled:true},
+  {key:"date_scanned",  label:"Date Scanned",       enabled:true},
+];
+const ORIGINAL_LABELS = Object.fromEntries(DEFAULT_FIELDS.map(f => [f.key, f.label]));
+const COMPACT_KEYS = new Set(["grader","grade","cert_number","year","card_number","sport_category"]);
+const PRICE_KEYS   = new Set(["purchase_price","value"]);
+const SKIP_SCAN    = new Set(["date_scanned","image_path","sold_price","sold_date"]);
+
+const fLabel = (fc, key) => fc?.find(f => f.key === key)?.label || ORIGINAL_LABELS[key] || key;
+const fEnabled = (fc, key) => !fc || fc.find(f => f.key === key)?.enabled !== false;
+
+// ── Icons ────────────────────────────────────────────────────────────────────
+const ICONS = {
+  camera:   ["M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z","M15 13a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"],
+  grid:     "M3 3h7v7H3V3zm11 0h7v7h-7V3zM3 14h7v7H3v-7zm11 0h7v7h-7v-7z",
+  plus:     "M12 5v14M5 12h14",
+  check:    "M20 6L9 17l-5-5",
+  trash:    "M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6",
+  download: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12",
+  copy:     "M8 4H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-2M8 4h8M8 4a2 2 0 012-2h4a2 2 0 012 2",
+  search:   "M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z",
+  x:        "M18 6L6 18M6 6l12 12",
+  chevronDown: "M6 9l6 6 6-6",
+  refresh:  "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15",
+  chart:    "M18 20V10M12 20V4M6 20v-6",
+  tag:      "M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01",
+  settings: ["M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"],
+};
+const STROKE_ICONS = new Set(["camera","plus","check","trash","download","copy","search","x","chevronDown","refresh","chart","tag","settings"]);
+
+function Icon({ name, size = 20, className = "", strokeWidth = 2 }) {
+  const def = ICONS[name];
+  if (!def) return null;
+  const isStroke = STROKE_ICONS.has(name);
+  const paths = Array.isArray(def) ? def : [def];
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24"
+      fill={isStroke ? "none" : "currentColor"} stroke={isStroke ? "currentColor" : "none"}
+      strokeWidth={isStroke ? strokeWidth : 0} strokeLinecap="round" strokeLinejoin="round"
+      className={className}>
+      {paths.map((d, i) => <path key={i} d={d} />)}
+    </svg>
+  );
+}
+
+// ── GraderBadge ──────────────────────────────────────────────────────────────
+function graderColor(g) {
+  const u = (g || "").toUpperCase();
+  if (u.includes("PSA")) return "bg-amber-500/20 text-amber-400 border border-amber-500/30";
+  if (u.includes("BGS") || u.includes("BECKETT")) return "bg-blue-500/20 text-blue-400 border border-blue-500/30";
+  if (u.includes("SGC")) return "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
+  if (u.includes("CGC")) return "bg-purple-500/20 text-purple-400 border border-purple-500/30";
+  return "bg-zinc-700/60 text-[#a1a1aa] border border-zinc-600/40";
+}
+function GraderBadge({ grader, grade }) {
+  if (!grader) return null;
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold whitespace-nowrap ${graderColor(grader)}`}>
+      {grader}{grade ? ` ${grade}` : ""}
+    </span>
+  );
+}
+
+// ── Field ────────────────────────────────────────────────────────────────────
+function Field({ label, value, onChange, placeholder, prefix, readOnly }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-[10px] font-semibold text-[#a1a1aa] uppercase tracking-wider">{label}</label>
+      <div className="relative">
+        {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#a1a1aa] text-sm pointer-events-none select-none">{prefix}</span>}
+        <input type="text" value={value || ""} onChange={onChange ? e => onChange(e.target.value) : undefined}
+          readOnly={readOnly || !onChange} placeholder={placeholder || ""}
+          inputMode={prefix === "$" ? "decimal" : "text"}
+          className={`w-full bg-[#27272a] border border-[#3f3f46] rounded-lg text-sm text-[#fafafa] placeholder-[#52525b] outline-none transition-colors ${prefix ? "pl-6 pr-3 py-2.5" : "px-3 py-2.5"} ${onChange && !readOnly ? "focus:border-indigo-500" : "opacity-80 cursor-default"}`}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── Btn ──────────────────────────────────────────────────────────────────────
+function Btn({ children, onClick, variant = "primary", size = "md", disabled, href, className = "" }) {
+  const base = "inline-flex items-center justify-center gap-2 font-semibold rounded-xl transition-all active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed select-none cursor-pointer";
+  const sizes = { sm: "px-3 py-1.5 text-xs", md: "px-4 py-2.5 text-sm", lg: "px-5 py-3 text-base w-full" };
+  const variants = {
+    primary: "bg-indigo-600 hover:bg-indigo-500 text-white",
+    success: "bg-emerald-600 hover:bg-emerald-500 text-white",
+    danger:  "bg-red-600 hover:bg-red-500 text-white",
+    ghost:   "bg-transparent border border-[#3f3f46] hover:border-zinc-500 text-[#fafafa]",
+    "ghost-indigo": "bg-transparent border border-indigo-500/50 hover:border-indigo-400 text-indigo-400",
+  };
+  const cls = `${base} ${sizes[size]} ${variants[variant]} ${className}`;
+  if (href) return <a href={href} className={cls}>{children}</a>;
+  return <button onClick={onClick} disabled={disabled} className={cls}>{children}</button>;
+}
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+function Toast({ message, onDone }) {
+  useEffect(() => {
+    if (!message) return;
+    const t = setTimeout(onDone, 2800);
+    return () => clearTimeout(t);
+  }, [message, onDone]);
+  if (!message) return null;
+  return (
+    <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[200] animate-fade-in pointer-events-none">
+      <div className="bg-zinc-100 text-zinc-900 px-5 py-2.5 rounded-full text-sm font-semibold shadow-xl whitespace-nowrap">
+        {message}
+      </div>
+    </div>
+  );
+}
+
+// ── FieldEditor ───────────────────────────────────────────────────────────────
+function FieldEditor({ initialFields, onSave, saveLabel = "Save Changes" }) {
+  const [fields, setFields] = useState(initialFields.map(f => ({...f})));
+  const [ds, setDs] = useState(null); // drag state: {idx, overIdx, slotH, ghostX, ghostY, offsetX, offsetY, w, h}
+  const dragRef = useRef(null);
+  const listRef = useRef(null);
+
+  const toggle = i => setFields(p => p.map((f,j) => j===i ? {...f, enabled: !f.enabled} : f));
+  const rename = (i, label) => setFields(p => p.map((f,j) => j===i ? {...f, label} : f));
+  const reset  = i => setFields(p => p.map((f,j) => j===i ? {...f, label: ORIGINAL_LABELS[f.key] || f.label} : f));
+
+  const reorder = (from, to) => {
+    if (from == null || to == null || from === to) return;
+    setFields(p => { const a=[...p]; const [item]=a.splice(from,1); a.splice(to,0,item); return a; });
+  };
+
+  const measureList = () => {
+    const rows = listRef.current?.querySelectorAll("[data-rowidx]");
+    if (!rows || rows.length < 2) return 52;
+    return rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top;
+  };
+
+  const nearestIdx = clientY => {
+    const rows = listRef.current?.querySelectorAll("[data-rowidx]");
+    if (!rows) return null;
+    let best = null, bestDist = Infinity;
+    rows.forEach(row => {
+      const rect = row.getBoundingClientRect();
+      const dist = Math.abs(clientY - (rect.top + rect.height / 2));
+      if (dist < bestDist) { bestDist = dist; best = parseInt(row.dataset.rowidx, 10); }
+    });
+    return best;
+  };
+
+  const shiftY = (i) => {
+    if (!ds) return 0;
+    const { idx, overIdx, slotH } = ds;
+    if (i === idx || overIdx == null) return 0;
+    if (idx < overIdx && i > idx && i <= overIdx) return -slotH;
+    if (idx > overIdx && i >= overIdx && i < idx) return slotH;
+    return 0;
+  };
+
+  // ── Touch ──
+  const onTouchStart = (e, i) => {
+    const row = listRef.current.querySelectorAll("[data-rowidx]")[i];
+    const rect = row.getBoundingClientRect();
+    const t = e.touches[0];
+    const state = { idx: i, overIdx: i, slotH: measureList(),
+      ghostX: rect.left, ghostY: rect.top,
+      offsetX: t.clientX - rect.left, offsetY: t.clientY - rect.top,
+      w: rect.width, h: rect.height };
+    dragRef.current = state;
+    setDs({...state});
+  };
+  const onTouchMove = (e) => {
+    if (!dragRef.current) return;
+    const t = e.touches[0];
+    dragRef.current.ghostX = t.clientX - dragRef.current.offsetX;
+    dragRef.current.ghostY = t.clientY - dragRef.current.offsetY;
+    dragRef.current.overIdx = nearestIdx(t.clientY);
+    setDs({...dragRef.current});
+  };
+  const onTouchEnd = () => {
+    if (dragRef.current) reorder(dragRef.current.idx, dragRef.current.overIdx);
+    dragRef.current = null; setDs(null);
+  };
+
+  // ── Mouse ──
+  const onMouseDown = (e, i) => {
+    e.preventDefault();
+    const row = listRef.current.querySelectorAll("[data-rowidx]")[i];
+    const rect = row.getBoundingClientRect();
+    const state = { idx: i, overIdx: i, slotH: measureList(),
+      ghostX: rect.left, ghostY: rect.top,
+      offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top,
+      w: rect.width, h: rect.height };
+    dragRef.current = state;
+    setDs({...state});
+    const move = e => {
+      dragRef.current.ghostX = e.clientX - dragRef.current.offsetX;
+      dragRef.current.ghostY = e.clientY - dragRef.current.offsetY;
+      dragRef.current.overIdx = nearestIdx(e.clientY);
+      setDs({...dragRef.current});
+    };
+    const up = () => {
+      if (dragRef.current) reorder(dragRef.current.idx, dragRef.current.overIdx);
+      dragRef.current = null; setDs(null);
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  };
+
+  return (
+    <div>
+      <div ref={listRef} className="mb-5" style={{display:"flex", flexDirection:"column", gap:"8px"}}>
+        {fields.map((f, i) => {
+          const isActive = ds?.idx === i;
+          const ty = shiftY(i);
+          return (
+            <div key={f.key} data-rowidx={i}
+              style={{
+                transform: `translateY(${ty}px)`,
+                transition: ds && !isActive ? "transform 160ms cubic-bezier(0.2,0,0,1)" : "none",
+                opacity: isActive ? 0 : (f.enabled ? 1 : 0.45),
+                visibility: isActive ? "hidden" : "visible",
+              }}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border
+                ${f.enabled ? "bg-[#18181b] border-[#3f3f46]" : "bg-[#09090b] border-[#27272a]"}
+              `}>
+              <span
+                onMouseDown={e => onMouseDown(e, i)}
+                onTouchStart={e => onTouchStart(e, i)}
+                onTouchMove={onTouchMove}
+                onTouchEnd={onTouchEnd}
+                style={{touchAction:"none"}}
+                className="text-[#71717a] hover:text-[#a1a1aa] flex-shrink-0 select-none cursor-grab active:cursor-grabbing px-1 py-1 text-base leading-none">⠿</span>
+              <button onClick={() => toggle(i)}
+                className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${f.enabled ? "bg-indigo-600" : "bg-[#3f3f46]"}`}>
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${f.enabled ? "left-[18px]" : "left-0.5"}`} />
+              </button>
+              <input type="text" value={f.label} onChange={e => rename(i, e.target.value)}
+                draggable={false}
+                className="flex-1 bg-transparent text-sm text-[#fafafa] outline-none border-b border-transparent focus:border-indigo-500 transition-colors py-0.5 min-w-0 cursor-text" />
+              {f.label !== (ORIGINAL_LABELS[f.key] || "") && (
+                <button onClick={() => reset(i)}
+                  className="text-[10px] text-[#52525b] hover:text-indigo-400 transition-colors flex-shrink-0 underline">reset</button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Floating ghost follows finger/cursor */}
+      {ds && (() => {
+        const f = fields[ds.idx];
+        return (
+          <div style={{
+            position:"fixed", left:ds.ghostX, top:ds.ghostY,
+            width:ds.w, height:ds.h, zIndex:9999, pointerEvents:"none",
+            transform:"scale(1.04) rotate(-1deg)",
+            boxShadow:"0 16px 40px rgba(0,0,0,0.65)",
+            borderRadius:"12px", transition:"none",
+          }}
+          className={`flex items-center gap-3 px-3 py-2.5 border
+            ${f.enabled ? "bg-[#232329] border-indigo-500/60" : "bg-[#18181b] border-[#3f3f46]"}
+          `}>
+            <span className="text-[#71717a] flex-shrink-0 select-none px-1 py-1 text-base leading-none">⠿</span>
+            <span className={`relative w-9 h-5 rounded-full flex-shrink-0 ${f.enabled ? "bg-indigo-600" : "bg-[#3f3f46]"}`}>
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow ${f.enabled ? "left-[18px]" : "left-0.5"}`} />
+            </span>
+            <span className="flex-1 text-sm font-medium text-[#fafafa] truncate">{f.label}</span>
+          </div>
+        );
+      })()}
+
+      <Btn variant="primary" size="lg" onClick={() => onSave(fields)}>{saveLabel}</Btn>
+    </div>
+  );
+}
+
+// ── CardResult ────────────────────────────────────────────────────────────────
+function CardResult({ cardData, onChange, onSave, saved, fieldConfig }) {
+  const [expanded, setExpanded] = useState(!saved);
+  useEffect(() => { if (saved) setExpanded(false); }, [saved]);
+
+  const fc = fieldConfig || DEFAULT_FIELDS;
+  const enabled = fc.filter(f => f.enabled && !SKIP_SCAN.has(f.key));
+  const compactFields = enabled.filter(f => COMPACT_KEYS.has(f.key));
+  const fullFields    = enabled.filter(f => !COMPACT_KEYS.has(f.key) && !PRICE_KEYS.has(f.key));
+  const priceFields   = enabled.filter(f => PRICE_KEYS.has(f.key));
+
+  const name = cardData.player_name || cardData.set_name || "Unknown Card";
+
+  return (
+    <div className={`rounded-2xl border transition-all ${saved ? "border-emerald-500/30 bg-emerald-900/10 opacity-60" : "border-[#3f3f46] bg-[#18181b]"}`}>
+      <button onClick={() => setExpanded(!expanded)} className="w-full flex items-center gap-3 px-4 py-3.5 text-left">
+        <span className="flex-1 font-bold text-sm truncate">
+          {name}{saved && <span className="ml-2 text-emerald-400">✓</span>}
+        </span>
+        <GraderBadge grader={cardData.grader} grade={cardData.grade} />
+        <Icon name="chevronDown" size={16} className={`text-[#a1a1aa] flex-shrink-0 transition-transform ${expanded ? "" : "-rotate-90"}`} />
+      </button>
+      {expanded && (
+        <div className="px-4 pb-4 border-t border-[#3f3f46]/50">
+          {compactFields.length > 0 && (
+            <div className="pt-4 grid grid-cols-2 gap-3">
+              {compactFields.map(f => (
+                <Field key={f.key} label={f.label} value={cardData[f.key]}
+                  onChange={saved ? null : v => onChange(f.key, v)} readOnly={saved} />
+              ))}
+            </div>
+          )}
+          {fullFields.length > 0 && (
+            <div className="mt-3 flex flex-col gap-3">
+              {fullFields.map(f => (
+                <Field key={f.key} label={f.label} value={cardData[f.key]}
+                  onChange={saved ? null : v => onChange(f.key, v)} readOnly={saved} />
+              ))}
+            </div>
+          )}
+          {priceFields.length > 0 && (
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              {priceFields.map(f => (
+                <Field key={f.key} label={f.label} value={cardData[f.key]}
+                  onChange={saved ? null : v => onChange(f.key, v)}
+                  placeholder="0.00" prefix="$" readOnly={saved} />
+              ))}
+            </div>
+          )}
+          {!saved && (
+            <div className="mt-4">
+              <Btn variant="success" size="lg" onClick={onSave}>
+                <Icon name="plus" size={16} />Add to Collection
+              </Btn>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ScanTab ───────────────────────────────────────────────────────────────────
+function ScanTab({ onCollectionUpdate, showToast, existingCards = [], fieldConfig }) {
+  const [imagePreview, setImagePreview] = useState(null);
+  const [scanning, setScanning] = useState(false);
+  const [cards, setCards] = useState([]);
+  const [savedSet, setSavedSet] = useState(new Set());
+  const [multiMode, setMultiMode] = useState(false);
+  const fileInputRef = useRef(null);
+  const savedSetRef = useRef(new Set());
+
+  const handleFileChange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setImagePreview(URL.createObjectURL(file));
+    startScan(file);
+  };
+
+  const startScan = file => {
+    setScanning(true); setCards([]); setSavedSet(new Set()); savedSetRef.current = new Set();
+    const fd = new FormData(); fd.append("image", file);
+    if (multiMode) fd.append("multi", "1");
+    fetch("/scan", { method: "POST", body: fd })
+      .then(r => r.json())
+      .then(res => {
+        setScanning(false);
+        if (res.error) { showToast("Error: " + res.error); return; }
+        setCards(res.cards || []);
+      })
+      .catch(err => { setScanning(false); showToast("Network error: " + err.message); });
+  };
+
+  const handleChange = (idx, key, val) =>
+    setCards(prev => prev.map((c, i) => i === idx ? {...c, [key]: val} : c));
+
+  const saveCard = (idx, cardList) => {
+    const list = cardList || cards;
+    const data = {...list[idx]};
+    const cert = data.cert_number;
+    if (cert) {
+      const isDupe = existingCards.some(c => c.cert_number && String(c.cert_number) === String(cert));
+      if (isDupe && !confirm(`Cert #${cert} is already in your collection. Save anyway?`)) return;
+    }
+    fetch("/save", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(data) })
+      .then(r => r.json())
+      .then(res => {
+        if (res.success) {
+          savedSetRef.current = new Set([...savedSetRef.current, idx]);
+          setSavedSet(new Set(savedSetRef.current));
+          onCollectionUpdate();
+          showToast(`Added! Total: ${res.count}`);
+        } else showToast(res.error || "Save failed");
+      })
+      .catch(err => showToast("Error: " + err.message));
+  };
+
+  const saveAll = () => { const list = cards; list.forEach((_, i) => { if (!savedSetRef.current.has(i)) saveCard(i, list); }); };
+
+  const rescan = () => {
+    setCards([]); setSavedSet(new Set()); savedSetRef.current = new Set();
+    setImagePreview(null); setScanning(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const n = cards.length;
+
+  return (
+    <div className="px-4 pt-5 pb-28 max-w-2xl mx-auto">
+      {!imagePreview && !scanning && cards.length === 0 && (
+        <div onClick={() => fileInputRef.current?.click()}
+          className="border-2 border-dashed border-[#3f3f46] rounded-2xl p-12 text-center cursor-pointer hover:border-indigo-500/50 transition-colors bg-[#18181b] active:bg-[#27272a]">
+          <div className="flex items-center justify-center mb-4">
+            <div className="w-16 h-16 bg-indigo-500/20 border border-indigo-500/30 rounded-2xl flex items-center justify-center">
+              <Icon name="camera" size={28} className="text-indigo-400" />
+            </div>
+          </div>
+          <p className="text-base font-bold mb-1">Scan a card</p>
+          <p className="text-sm text-[#a1a1aa]">Take a photo or upload</p>
+        </div>
+      )}
+      <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handleFileChange} />
+
+      {imagePreview && (
+        <div className="mb-4">
+          <img src={imagePreview} alt="Preview" className="w-full max-h-64 object-contain rounded-2xl bg-[#18181b] border border-[#3f3f46]" />
+        </div>
+      )}
+
+      {scanning && (
+        <div className="flex flex-col items-center justify-center py-12 gap-4">
+          <div className="w-10 h-10 border-[3px] border-[#3f3f46] border-t-indigo-500 rounded-full animate-spin" />
+          <p className="text-sm text-[#a1a1aa]">Reading card labels…</p>
+        </div>
+      )}
+
+      {!scanning && cards.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-bold">{n} card{n !== 1 ? "s" : ""} found</p>
+            <div className="flex items-center gap-2">
+              {n > 1 && <Btn variant="success" size="sm" onClick={saveAll}><Icon name="plus" size={14} />Add All</Btn>}
+              <Btn variant="ghost" size="sm" onClick={rescan}><Icon name="refresh" size={14} />Rescan</Btn>
+            </div>
+          </div>
+          <div className="flex flex-col gap-3">
+            {cards.map((card, i) => (
+              <CardResult key={i} cardData={card} onChange={(key,val) => handleChange(i,key,val)}
+                onSave={() => saveCard(i)} saved={savedSet.has(i)} fieldConfig={fieldConfig} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!scanning && cards.length > 0 && (
+        <div className="mt-4">
+          <Btn variant="ghost" size="lg" onClick={() => fileInputRef.current?.click()}>
+            <Icon name="camera" size={16} />Scan Another
+          </Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── CardDetailModal ───────────────────────────────────────────────────────────
+function CardDetailModal({ card, onClose, onDelete, onRefresh, showToast, fieldConfig }) {
+  const [showSoldInput, setShowSoldInput] = useState(false);
+  const [soldPrice, setSoldPrice] = useState("");
+  const [purchasePrice, setPurchasePrice] = useState(String(card.purchase_price || ""));
+  const [value, setValue] = useState(String(card.value || ""));
+  const [saving, setSaving] = useState(false);
+
+  const fc = fieldConfig || DEFAULT_FIELDS;
+  const isSold = !!card.sold_price;
+  const priceChanged = purchasePrice !== String(card.purchase_price || "") || value !== String(card.value || "");
+
+  const pnl = (() => {
+    const sp = parseFloat(String(card.sold_price || "").replace(/[^0-9.]/g, ""));
+    const pp = parseFloat(String(card.purchase_price || "").replace(/[^0-9.]/g, ""));
+    if (!isNaN(sp) && !isNaN(pp) && sp > 0) return sp - pp;
+    return null;
+  })();
+
+  const savePrices = () => {
+    setSaving(true);
+    fetch(`/update/${card.id}`, {
+      method: "PATCH", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({purchase_price: purchasePrice, value}),
+    })
+      .then(r => r.json())
+      .then(res => { setSaving(false); if (res.success) { onRefresh(); showToast("Saved!"); } else showToast("Save failed"); })
+      .catch(() => { setSaving(false); showToast("Network error"); });
+  };
+
+  const markAsSold = () => {
+    if (!soldPrice.trim()) return;
+    fetch(`/update/${card.id}`, {
+      method: "PATCH", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({sold_price: soldPrice, sold_date: new Date().toISOString().slice(0,10)}),
+    })
+      .then(r => r.json())
+      .then(res => { if (res.success) { onRefresh(); showToast("Marked as sold!"); } else showToast("Update failed"); })
+      .catch(() => showToast("Network error"));
+  };
+
+  const COMPACT = ["grader","grade","cert_number","year","card_number","sport_category"];
+  const FULL    = ["player_name","set_name","variation"];
+  const show    = key => fEnabled(fc, key);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-fade-in" onClick={onClose} />
+      <div className="relative w-full sm:max-w-lg bg-[#18181b] sm:rounded-3xl rounded-t-3xl border border-[#3f3f46] max-h-[92vh] flex flex-col animate-slide-up sm:animate-fade-in z-10">
+        <div className="flex justify-center pt-3 pb-1 sm:hidden"><div className="w-10 h-1 bg-[#3f3f46] rounded-full" /></div>
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-[#3f3f46]">
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-base truncate">{card.player_name || "(unknown)"}</p>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              <GraderBadge grader={card.grader} grade={card.grade} />
+              {isSold && <span className="text-xs font-bold text-zinc-400 bg-zinc-700/60 border border-zinc-600/40 px-2 py-0.5 rounded-full">SOLD</span>}
+              {pnl !== null && <span className={`text-xs font-bold ${pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>{pnl >= 0 ? "+" : ""}${pnl.toFixed(2)} P&L</span>}
+            </div>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full bg-[#27272a] hover:bg-[#3f3f46] transition-colors flex-shrink-0">
+            <Icon name="x" size={16} className="text-[#a1a1aa]" />
+          </button>
+        </div>
+        <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
+          {card.image_path && (
+            <div className="flex justify-center bg-[#0a0a0b] rounded-xl overflow-hidden">
+              <img src={card.image_path} alt="Card" className="max-h-52 object-contain" />
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            {COMPACT.filter(show).map(key => (
+              <Field key={key} label={fLabel(fc, key)} value={card[key]} readOnly />
+            ))}
+          </div>
+          <div className="flex flex-col gap-3">
+            {FULL.filter(show).map(key => (
+              <Field key={key} label={fLabel(fc, key)} value={card[key]} readOnly />
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {show("purchase_price") && <Field label={fLabel(fc,"purchase_price")} value={purchasePrice} onChange={setPurchasePrice} placeholder="0.00" prefix="$" />}
+            {show("value") && <Field label={fLabel(fc,"value")} value={value} onChange={setValue} placeholder="0.00" prefix="$" />}
+            {isSold && show("sold_price") && <Field label={fLabel(fc,"sold_price")} value={card.sold_price} readOnly />}
+            {isSold && show("sold_date") && <Field label={fLabel(fc,"sold_date")} value={card.sold_date} readOnly />}
+            {show("date_scanned") && <Field label={fLabel(fc,"date_scanned")} value={card.date_scanned ? String(card.date_scanned).slice(0,16) : ""} readOnly />}
+          </div>
+          {!isSold && (
+            showSoldInput ? (
+              <div className="flex gap-2">
+                <div className="flex-1"><Field label={fLabel(fc,"sold_price")} value={soldPrice} onChange={setSoldPrice} placeholder="0.00" prefix="$" /></div>
+                <div className="flex items-end gap-2">
+                  <Btn variant="success" size="md" onClick={markAsSold}>Done</Btn>
+                  <Btn variant="ghost" size="md" onClick={() => { setShowSoldInput(false); setSoldPrice(""); }}>Cancel</Btn>
+                </div>
+              </div>
+            ) : (
+              <Btn variant="ghost-indigo" size="md" onClick={() => setShowSoldInput(true)}>
+                <Icon name="tag" size={15} />Mark as Sold
+              </Btn>
+            )
+          )}
+        </div>
+        <div className="flex items-center gap-3 px-5 py-4 border-t border-[#3f3f46]">
+          <Btn variant="danger" size="md" onClick={onDelete}><Icon name="trash" size={15} />Delete</Btn>
+          <div className="flex-1" />
+          {priceChanged && <Btn variant="success" size="md" onClick={savePrices} disabled={saving}><Icon name="check" size={15} />{saving ? "Saving…" : "Save"}</Btn>}
+          <Btn variant="ghost" size="md" onClick={onClose}>Close</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── CollectionCard ────────────────────────────────────────────────────────────
+function CollectionCard({ card, onClick, fieldConfig }) {
+  const fc = fieldConfig || DEFAULT_FIELDS;
+  const sub = [card.year, card.set_name, card.card_number].filter(Boolean).join(" · ");
+  return (
+    <button onClick={onClick} className="w-full text-left bg-[#18181b] hover:border-zinc-600 border border-[#3f3f46] rounded-2xl overflow-hidden transition-colors active:bg-[#27272a]">
+      {card.image_path && (
+        <div className="w-full h-32 bg-[#0a0a0b] flex items-center justify-center overflow-hidden">
+          <img src={card.image_path} alt="" className="h-full w-full object-contain" />
+        </div>
+      )}
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <GraderBadge grader={card.grader} grade={card.grade} />
+          {card.sold_price
+            ? <span className="text-xs font-bold text-zinc-400 bg-zinc-700/60 border border-zinc-600/40 px-2 py-0.5 rounded-full">SOLD</span>
+            : card.value ? <span className="text-emerald-400 font-bold text-sm">${card.value}</span> : null}
+        </div>
+        <p className="font-bold text-sm truncate">{card.player_name || "(unknown)"}</p>
+        {sub && <p className="text-xs text-[#a1a1aa] mt-0.5 truncate">{sub}</p>}
+      </div>
+    </button>
+  );
+}
+
+// ── CollectionTab ─────────────────────────────────────────────────────────────
+function CollectionTab({ cards, onRefresh, showToast, fieldConfig }) {
+  const [search, setSearch] = useState("");
+  const [selectedCard, setSelectedCard] = useState(null);
+  const [sortBy, setSortBy] = useState("date");
+  const [filterGrader, setFilterGrader] = useState("");
+
+  const parseMoney = v => parseFloat(String(v || "").replace(/[^0-9.]/g, "")) || 0;
+
+  const filtered = [...cards]
+    .filter(c => {
+      if (filterGrader && !(c.grader || "").toUpperCase().includes(filterGrader)) return false;
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (c.player_name||"").toLowerCase().includes(q) || (c.grader||"").toLowerCase().includes(q) ||
+             (c.set_name||"").toLowerCase().includes(q) || (c.year||"").toLowerCase().includes(q);
+    })
+    .sort((a, b) => {
+      if (sortBy === "date")   return (b.date_scanned||"").localeCompare(a.date_scanned||"");
+      if (sortBy === "player") return (a.player_name||"").localeCompare(b.player_name||"");
+      if (sortBy === "grade")  return (parseFloat(b.grade)||0) - (parseFloat(a.grade)||0);
+      if (sortBy === "value")  return parseMoney(b.value) - parseMoney(a.value);
+      if (sortBy === "price")  return parseMoney(b.purchase_price) - parseMoney(a.purchase_price);
+      return 0;
+    });
+
+  const buildTsv = () => {
+    const fc = (fieldConfig || DEFAULT_FIELDS).filter(f => f.enabled);
+    const rows = [fc.map(f => f.label), ...cards.map(c => fc.map(f => String(c[f.key] ?? "").replace(/\t/g," ")))];
+    return rows.map(r => r.join("\t")).join("\n");
+  };
+
+  const copyForSheets = () => {
+    if (!cards.length) { showToast("No cards to copy"); return; }
+    const tsv = buildTsv();
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(tsv).then(() => showToast("Copied!")).catch(() => execCopy(tsv, showToast));
+    } else execCopy(tsv, showToast);
+  };
+
+  const deleteOne = cardId => {
+    if (!confirm("Remove this card?")) return;
+    fetch(`/delete/${cardId}`, { method: "DELETE" })
+      .then(r => r.json())
+      .then(() => { setSelectedCard(null); onRefresh(); showToast("Card removed"); });
+  };
+
+  const deleteAll = () => {
+    if (!confirm("Delete ALL cards? This cannot be undone.")) return;
+    fetch("/delete-all", { method: "DELETE" })
+      .then(r => r.json())
+      .then(() => { onRefresh(); showToast("All cards deleted"); });
+  };
+
+  return (
+    <div className="px-4 pt-5 pb-28 max-w-2xl mx-auto">
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <Btn variant="primary" size="sm" href="/download"><Icon name="download" size={14} />Export File</Btn>
+        <Btn variant="ghost" size="sm" onClick={copyForSheets}><Icon name="copy" size={14} />Copy for Sheets</Btn>
+        {cards.length > 0 && <Btn variant="danger" size="sm" onClick={deleteAll} className="ml-auto"><Icon name="trash" size={14} />Delete All</Btn>}
+      </div>
+
+      <div className="relative mb-3">
+        <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"><Icon name="search" size={16} className="text-[#52525b]" /></div>
+        <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search cards…"
+          className="w-full bg-[#18181b] border border-[#3f3f46] rounded-xl pl-9 pr-4 py-2.5 text-sm text-[#fafafa] placeholder-[#52525b] outline-none focus:border-indigo-500 transition-colors" />
+      </div>
+
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+          className="bg-[#18181b] border border-[#3f3f46] rounded-lg px-2.5 py-1.5 text-xs text-[#fafafa] outline-none focus:border-indigo-500 cursor-pointer">
+          <option value="date">Newest first</option>
+          <option value="player">Player A–Z</option>
+          <option value="grade">Highest grade</option>
+          <option value="value">Highest value</option>
+          <option value="price">Highest price</option>
+        </select>
+        <div className="flex gap-1 ml-auto">
+          {["","PSA","BGS","SGC","CGC"].map(g => (
+            <button key={g||"all"} onClick={() => setFilterGrader(g)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors ${filterGrader===g ? "bg-indigo-600 text-white" : "bg-[#27272a] text-[#a1a1aa] hover:text-[#fafafa]"}`}>
+              {g || "All"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {cards.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-[#a1a1aa] gap-3">
+          <Icon name="grid" size={40} className="opacity-30" />
+          <p className="text-sm">No cards scanned yet</p>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-[#a1a1aa] gap-3">
+          <Icon name="search" size={36} className="opacity-30" />
+          <p className="text-sm">No matching cards</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {filtered.map(card => (
+            <CollectionCard key={card.id} card={card} fieldConfig={fieldConfig} onClick={() => setSelectedCard(card)} />
+          ))}
+        </div>
+      )}
+
+      {selectedCard && (
+        <CardDetailModal
+          card={selectedCard}
+          fieldConfig={fieldConfig}
+          onClose={() => setSelectedCard(null)}
+          onDelete={() => deleteOne(selectedCard.id)}
+          onRefresh={() => { setSelectedCard(null); onRefresh(); }}
+          showToast={showToast}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── StatsTab ──────────────────────────────────────────────────────────────────
+function StatCard({ label, value, sub, color = "default" }) {
+  const colors = { default:"text-[#fafafa]", emerald:"text-emerald-400", red:"text-red-400", indigo:"text-indigo-400" };
+  return (
+    <div className="bg-[#18181b] border border-[#3f3f46] rounded-2xl p-4">
+      <p className="text-[10px] font-semibold text-[#a1a1aa] uppercase tracking-wider mb-1">{label}</p>
+      <p className={`text-xl font-bold ${colors[color]}`}>{value}</p>
+      {sub && <p className="text-xs text-[#52525b] mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+
+function StatsTab({ cards }) {
+  const parseMoney = v => parseFloat(String(v||"").replace(/[^0-9.]/g,"")) || 0;
+  const total = cards.length;
+  const sold = cards.filter(c => c.sold_price);
+  const unsold = cards.filter(c => !c.sold_price);
+  const totalCost = cards.reduce((s,c) => s + parseMoney(c.purchase_price), 0);
+  const portfolioValue = unsold.reduce((s,c) => s + parseMoney(c.value), 0);
+  const realizedPnL = sold.reduce((s,c) => s + (parseMoney(c.sold_price) - parseMoney(c.purchase_price)), 0);
+  const unrealizedPnL = unsold.reduce((s,c) => { const v=parseMoney(c.value), p=parseMoney(c.purchase_price); return v&&p ? s+(v-p) : s; }, 0);
+  const avgGrade = (() => { const g=cards.map(c=>parseFloat(c.grade)||0).filter(g=>g>0); return g.length ? (g.reduce((a,b)=>a+b,0)/g.length).toFixed(1) : null; })();
+  const avgPctPaid = (() => {
+    const r=cards.map(c=>({p:parseMoney(c.purchase_price),v:parseMoney(c.value)})).filter(({p,v})=>p>0&&v>0).map(({p,v})=>p/v*100);
+    return r.length ? (r.reduce((a,b)=>a+b,0)/r.length).toFixed(1) : null;
+  })();
+  const graderCounts = cards.reduce((acc,c) => {
+    const g=(c.grader||"").toUpperCase();
+    const key = g.includes("PSA")?"PSA":g.includes("BGS")||g.includes("BECKETT")?"BGS":g.includes("SGC")?"SGC":g.includes("CGC")?"CGC":"Other";
+    acc[key]=(acc[key]||0)+1; return acc;
+  }, {});
+
+  if (total === 0) return (
+    <div className="flex flex-col items-center justify-center py-24 text-[#a1a1aa] gap-3 px-4">
+      <Icon name="chart" size={40} className="opacity-30" />
+      <p className="text-sm">No cards yet — scan some to see stats</p>
+    </div>
+  );
+
+  return (
+    <div className="px-4 pt-5 pb-28 max-w-2xl mx-auto space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="Total Cards" value={total} sub={`${sold.length} sold · ${unsold.length} held`} />
+        <StatCard label="Avg Grade" value={avgGrade || "—"} color="indigo" />
+        <StatCard label="Total Invested" value={totalCost ? `$${totalCost.toFixed(2)}` : "—"} />
+        <StatCard label="Portfolio Value" value={portfolioValue ? `$${portfolioValue.toFixed(2)}` : "—"} color="emerald" />
+        {avgPctPaid !== null && (
+          <StatCard label="Avg % of Value Paid" value={`${avgPctPaid}%`}
+            color={parseFloat(avgPctPaid)<=80?"emerald":parseFloat(avgPctPaid)<=100?"default":"red"}
+            sub="purchase price ÷ value" />
+        )}
+        {sold.length > 0 && (
+          <StatCard label="Realized P&L" value={`${realizedPnL>=0?"+":""}$${realizedPnL.toFixed(2)}`}
+            color={realizedPnL>=0?"emerald":"red"} sub={`${sold.length} card${sold.length!==1?"s":""} sold`} />
+        )}
+        {unrealizedPnL !== 0 && (
+          <StatCard label="Unrealized P&L" value={`${unrealizedPnL>=0?"+":""}$${unrealizedPnL.toFixed(2)}`}
+            color={unrealizedPnL>=0?"emerald":"red"} sub="held cards w/ cost & value" />
+        )}
+      </div>
+      {Object.keys(graderCounts).length > 0 && (
+        <div className="bg-[#18181b] border border-[#3f3f46] rounded-2xl p-4">
+          <p className="text-[10px] font-semibold text-[#a1a1aa] uppercase tracking-wider mb-3">Grader Breakdown</p>
+          <div className="space-y-2.5">
+            {["PSA","BGS","SGC","CGC","Other"].filter(g => graderCounts[g]).map(g => {
+              const count = graderCounts[g], pct = Math.round(count/total*100);
+              return (
+                <div key={g}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-semibold">{g}</span>
+                    <span className="text-xs text-[#a1a1aa]">{count} · {pct}%</span>
+                  </div>
+                  <div className="h-1.5 bg-[#27272a] rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full ${g==="PSA"?"bg-amber-500":g==="BGS"?"bg-blue-500":g==="SGC"?"bg-emerald-500":g==="CGC"?"bg-purple-500":"bg-zinc-500"}`}
+                      style={{"width": pct + "%"}} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── SettingsTab ───────────────────────────────────────────────────────────────
+function SettingsTab({ fieldConfig, onFieldConfigUpdate, showToast }) {
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = fields => {
+    setSaving(true);
+    fetch("/field-config", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({fields}) })
+      .then(r => r.json())
+      .then(res => { setSaving(false); if (res.success) { onFieldConfigUpdate(fields); showToast("Settings saved!"); } else showToast("Save failed"); })
+      .catch(() => { setSaving(false); showToast("Network error"); });
+  };
+
+  return (
+    <div className="px-4 pt-5 pb-28 max-w-2xl mx-auto">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-base font-bold">Field Configuration</h2>
+        <Btn variant="ghost" size="sm" onClick={() => handleSave([...DEFAULT_FIELDS])}>Reset all</Btn>
+      </div>
+      <p className="text-xs text-[#a1a1aa] mb-5">Toggle, rename, and reorder fields. Changes apply to the scan form, collection view, and exports.</p>
+      <FieldEditor key={JSON.stringify(fieldConfig)} initialFields={fieldConfig} onSave={handleSave}
+        saveLabel={saving ? "Saving…" : "Save Changes"} />
+    </div>
+  );
+}
+
+// ── OnboardingScreen ──────────────────────────────────────────────────────────
+function OnboardingScreen({ onComplete, showToast }) {
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = fields => {
+    setSaving(true);
+    fetch("/field-config", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({fields}) })
+      .then(r => r.json())
+      .then(res => { setSaving(false); if (res.success) onComplete(fields); else showToast("Save failed"); })
+      .catch(() => { setSaving(false); showToast("Network error"); });
+  };
+
+  return (
+    <div className="min-h-screen bg-[#09090b] px-4 pt-12 pb-12 max-w-lg mx-auto">
+      <div className="mb-8">
+        <div className="w-14 h-14 bg-indigo-500/20 border border-indigo-500/30 rounded-2xl flex items-center justify-center mb-5">
+          <Icon name="camera" size={26} className="text-indigo-400" />
+        </div>
+        <h1 className="text-2xl font-bold mb-2">Welcome to Card Scanner</h1>
+        <p className="text-sm text-[#a1a1aa] leading-relaxed">Choose which fields to track on each card, rename them to fit your workflow, and set the order they appear in your spreadsheet.</p>
+      </div>
+      <FieldEditor initialFields={DEFAULT_FIELDS} onSave={handleSave} saveLabel={saving ? "Saving…" : "Save & Get Started"} />
+      <div className="mt-3">
+        <Btn variant="ghost" size="lg" onClick={() => handleSave([...DEFAULT_FIELDS])}>Use Defaults</Btn>
+      </div>
+    </div>
+  );
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function execCopy(text, showToast) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0;font-size:12px;";
+  document.body.appendChild(ta); ta.focus(); ta.select(); ta.setSelectionRange(0, 99999);
+  const ok = document.execCommand("copy");
+  document.body.removeChild(ta);
+  showToast(ok ? "Copied! Paste into Google Sheets or Excel." : "Use Export File instead.");
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
+function App() {
+  const [tab, setTab] = useState("scan");
+  const [cards, setCards] = useState([]);
+  const [fieldConfig, setFieldConfig] = useState(null);
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  const fetchCards = useCallback(() => {
+    fetch("/cards").then(r => r.json()).then(setCards).catch(() => {});
+  }, []);
+
+  const fetchConfig = useCallback(() => {
+    fetch("/field-config").then(r => r.json())
+      .then(data => { setFieldConfig(data.config); setConfigLoaded(true); })
+      .catch(() => setConfigLoaded(true));
+  }, []);
+
+  useEffect(() => { fetchConfig(); fetchCards(); }, [fetchConfig, fetchCards]);
+
+  const showToast = useCallback(msg => setToast(msg), []);
+
+  if (!configLoaded) return (
+    <div className="min-h-screen bg-[#09090b] flex items-center justify-center">
+      <div className="w-8 h-8 border-2 border-[#3f3f46] border-t-indigo-500 rounded-full animate-spin" />
+    </div>
+  );
+
+  if (!fieldConfig) return (
+    <>
+      <OnboardingScreen onComplete={fields => { setFieldConfig(fields); fetchCards(); }} showToast={showToast} />
+      <Toast message={toast} onDone={() => setToast(null)} />
+    </>
+  );
+
+  const tabs = [
+    { id: "scan",       label: "Scan",       icon: "camera"   },
+    { id: "collection", label: "Collection", icon: "grid"     },
+    { id: "stats",      label: "Stats",      icon: "chart"    },
+    { id: "settings",   label: "Settings",   icon: "settings" },
+  ];
+
+  return (
+    <div className="min-h-screen bg-[#09090b]">
+      <div className="min-h-screen">
+        {tab === "scan"       && <ScanTab onCollectionUpdate={fetchCards} showToast={showToast} existingCards={cards} fieldConfig={fieldConfig} />}
+        {tab === "collection" && <CollectionTab cards={cards} onRefresh={fetchCards} showToast={showToast} fieldConfig={fieldConfig} />}
+        {tab === "stats"      && <StatsTab cards={cards} />}
+        {tab === "settings"   && <SettingsTab fieldConfig={fieldConfig} onFieldConfigUpdate={setFieldConfig} showToast={showToast} />}
+      </div>
+      <nav className="fixed bottom-0 left-0 right-0 bg-[#18181b]/95 backdrop-blur border-t border-[#3f3f46] z-40">
+        <div className="max-w-2xl mx-auto flex">
+          {tabs.map(t => {
+            const active = tab === t.id;
+            return (
+              <button key={t.id} onClick={() => { setTab(t.id); if (t.id==="collection"||t.id==="stats") fetchCards(); }}
+                className={`flex-1 flex flex-col items-center justify-center gap-1 py-3 transition-colors ${active ? "text-indigo-400" : "text-[#52525b]"}`}>
+                <div className="relative">
+                  <Icon name={t.icon} size={22} />
+                  {t.id === "collection" && cards.length > 0 && (
+                    <span className="absolute -top-1.5 -right-2 bg-indigo-600 text-white text-[10px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 leading-none">
+                      {cards.length}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[10px] font-semibold">{t.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+      <Toast message={toast} onDone={() => setToast(null)} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>{% endraw %}
+</body>
+</html>
