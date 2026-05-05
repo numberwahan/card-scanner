@@ -14,7 +14,7 @@ from card_ocr import extract_card_data
 from db import (
     DEFAULT_FIELDS, get_field_config, save_field_config,
     get_all_cards, insert_card, update_card, delete_card, delete_all_cards,
-    count_cards, upload_image,
+    count_cards, upload_image, verify_token,
 )
 from spreadsheet import generate_excel
 
@@ -45,6 +45,17 @@ def _local_ip():
         s.close()
 
 
+def _get_user_id():
+    """Extract and verify Bearer token from Authorization header or ?token= query param."""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return verify_token(auth[7:])
+    token = request.args.get("token", "")
+    if token:
+        return verify_token(token)
+    return None
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -54,16 +65,22 @@ def index():
 
 @app.route("/field-config", methods=["GET"])
 def get_config():
-    config = get_field_config()
+    user_id = _get_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    config = get_field_config(user_id)
     return jsonify({"config": config})
 
 
 @app.route("/field-config", methods=["POST"])
 def post_config():
+    user_id = _get_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
     data = request.get_json()
     if not data or "fields" not in data:
         return jsonify({"error": "Missing fields"}), 400
-    ok = save_field_config(data["fields"])
+    ok = save_field_config(data["fields"], user_id)
     return jsonify({"success": ok})
 
 
@@ -71,6 +88,10 @@ def post_config():
 
 @app.route("/scan", methods=["POST"])
 def scan():
+    user_id = _get_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
     if "image" not in request.files:
         return jsonify({"error": "No image uploaded"}), 400
 
@@ -84,7 +105,6 @@ def scan():
     file.save(str(save_path))
 
     try:
-        # Upload image to Supabase Storage
         with open(save_path, "rb") as f:
             image_bytes = f.read()
         image_path = upload_image(filename, image_bytes)
@@ -105,38 +125,53 @@ def scan():
 
 @app.route("/save", methods=["POST"])
 def save():
+    user_id = _get_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data"}), 400
-    card = insert_card(data)
+    card = insert_card(data, user_id)
     if card is None:
         return jsonify({"error": "Insert failed"}), 500
-    return jsonify({"success": True, "count": count_cards(), "card": card})
+    return jsonify({"success": True, "count": count_cards(user_id), "card": card})
 
 
 @app.route("/cards")
 def cards():
-    return jsonify(get_all_cards())
+    user_id = _get_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    return jsonify(get_all_cards(user_id))
 
 
 @app.route("/update/<int:card_id>", methods=["PATCH"])
 def update(card_id):
+    user_id = _get_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data"}), 400
-    ok = update_card(card_id, data)
+    ok = update_card(card_id, data, user_id)
     return jsonify({"success": ok})
 
 
 @app.route("/delete/<int:card_id>", methods=["DELETE"])
 def delete(card_id):
-    ok = delete_card(card_id)
+    user_id = _get_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    ok = delete_card(card_id, user_id)
     return jsonify({"success": ok})
 
 
 @app.route("/delete-all", methods=["DELETE"])
 def delete_all():
-    ok = delete_all_cards()
+    user_id = _get_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    ok = delete_all_cards(user_id)
     return jsonify({"success": ok})
 
 
@@ -144,23 +179,29 @@ def delete_all():
 
 @app.route("/download")
 def download():
-    cards = get_all_cards()
-    config = get_field_config() or DEFAULT_FIELDS
-    buf = generate_excel(cards, config)
+    user_id = _get_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    all_cards = get_all_cards(user_id)
+    config = get_field_config(user_id) or DEFAULT_FIELDS
+    buf = generate_excel(all_cards, config)
     return send_file(buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                      as_attachment=True, download_name="graded_cards.xlsx")
 
 
 @app.route("/download/csv")
 def download_csv():
-    cards = get_all_cards()
-    config = get_field_config() or DEFAULT_FIELDS
+    user_id = _get_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    all_cards = get_all_cards(user_id)
+    config = get_field_config(user_id) or DEFAULT_FIELDS
     enabled = [f for f in config if f.get("enabled", True)]
     buf = io.StringIO()
     headers = [f["label"] for f in enabled]
     writer = csv.DictWriter(buf, fieldnames=headers, extrasaction="ignore")
     writer.writeheader()
-    for card in cards:
+    for card in all_cards:
         row = {f["label"]: card.get(f["key"]) for f in enabled}
         writer.writerow(row)
     output = io.BytesIO(buf.getvalue().encode("utf-8"))

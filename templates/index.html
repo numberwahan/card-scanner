@@ -8,6 +8,13 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const supabaseClient = supabase.createClient(
+  "https://juwodemjvvflgyfafirq.supabase.co",
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp1d29kZW1qdnZmbGd5ZmFmaXJxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3NDU3NzEsImV4cCI6MjA5MzMyMTc3MX0.cwxohBTWvZLLxwuIxpUlEAgU7JcZr9pG4H7QhEvwyYU"
+);
+</script>
 <script>
 tailwind.config = {
   theme: {
@@ -419,7 +426,7 @@ function CardResult({ cardData, onChange, onSave, saved, fieldConfig }) {
 }
 
 // ── ScanTab ───────────────────────────────────────────────────────────────────
-function ScanTab({ onCollectionUpdate, showToast, existingCards = [], fieldConfig }) {
+function ScanTab({ onCollectionUpdate, showToast, existingCards = [], fieldConfig, authFetch }) {
   const [imagePreview, setImagePreview] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [cards, setCards] = useState([]);
@@ -442,7 +449,7 @@ function ScanTab({ onCollectionUpdate, showToast, existingCards = [], fieldConfi
     setScanning(true); setCards([]); setSavedSet(new Set()); savedSetRef.current = new Set();
     const fd = new FormData(); fd.append("image", file);
     if (multiMode) fd.append("multi", "1");
-    fetch("/scan", { method: "POST", body: fd })
+    authFetch("/scan", { method: "POST", body: fd })
       .then(r => r.json())
       .then(res => {
         setScanning(false);
@@ -463,7 +470,7 @@ function ScanTab({ onCollectionUpdate, showToast, existingCards = [], fieldConfi
       const isDupe = existingCards.some(c => c.cert_number && String(c.cert_number) === String(cert));
       if (isDupe && !confirm(`Cert #${cert} is already in your collection. Save anyway?`)) return;
     }
-    fetch("/save", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(data) })
+    authFetch("/save", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(data) })
       .then(r => r.json())
       .then(res => {
         if (res.success) {
@@ -601,7 +608,7 @@ function ScanTab({ onCollectionUpdate, showToast, existingCards = [], fieldConfi
 }
 
 // ── CardDetailModal ───────────────────────────────────────────────────────────
-function CardDetailModal({ card, onClose, onDelete, onRefresh, showToast, fieldConfig }) {
+function CardDetailModal({ card, onClose, onDelete, onRefresh, showToast, fieldConfig, authFetch }) {
   const [showSoldInput, setShowSoldInput] = useState(false);
   const [soldPrice, setSoldPrice] = useState("");
   const [purchasePrice, setPurchasePrice] = useState(String(card.purchase_price || ""));
@@ -621,7 +628,7 @@ function CardDetailModal({ card, onClose, onDelete, onRefresh, showToast, fieldC
 
   const savePrices = () => {
     setSaving(true);
-    fetch(`/update/${card.id}`, {
+    authFetch(`/update/${card.id}`, {
       method: "PATCH", headers: {"Content-Type":"application/json"},
       body: JSON.stringify({purchase_price: purchasePrice, value}),
     })
@@ -632,7 +639,7 @@ function CardDetailModal({ card, onClose, onDelete, onRefresh, showToast, fieldC
 
   const markAsSold = () => {
     if (!soldPrice.trim()) return;
-    fetch(`/update/${card.id}`, {
+    authFetch(`/update/${card.id}`, {
       method: "PATCH", headers: {"Content-Type":"application/json"},
       body: JSON.stringify({sold_price: soldPrice, sold_date: new Date().toISOString().slice(0,10)}),
     })
@@ -772,7 +779,7 @@ function ListCard({ card, onClick, fieldConfig }) {
 }
 
 // ── CollectionTab ─────────────────────────────────────────────────────────────
-function CollectionTab({ cards, onRefresh, showToast, fieldConfig, onDeleteAll }) {
+function CollectionTab({ cards, onRefresh, showToast, fieldConfig, onDeleteAll, authFetch, getToken }) {
   const [search, setSearch] = useState("");
   const [selectedCard, setSelectedCard] = useState(null);
   const [sortBy, setSortBy] = useState("date");
@@ -832,7 +839,7 @@ function CollectionTab({ cards, onRefresh, showToast, fieldConfig, onDeleteAll }
 
   const deleteOne = cardId => {
     if (!confirm("Remove this card?")) return;
-    fetch(`/delete/${cardId}`, { method: "DELETE" })
+    authFetch(`/delete/${cardId}`, { method: "DELETE" })
       .then(r => r.json())
       .then(() => { setSelectedCard(null); onRefresh(); showToast("Card removed"); });
   };
@@ -841,7 +848,7 @@ function CollectionTab({ cards, onRefresh, showToast, fieldConfig, onDeleteAll }
     <div className="px-4 pt-5 pb-28 max-w-2xl mx-auto">
       {/* Action bar */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
-        <Btn variant="primary" size="sm" href="/download"><Icon name="download" size={14} />Export File</Btn>
+        <Btn variant="primary" size="sm" href={"/download?token=" + getToken()}><Icon name="download" size={14} />Export File</Btn>
         <Btn variant="ghost" size="sm" onClick={copyForSheets}><Icon name="copy" size={14} />Copy for Sheets</Btn>
         <div className="flex items-center gap-1 ml-auto">
           <button onClick={() => setListView(false)}
@@ -933,6 +940,7 @@ function CollectionTab({ cards, onRefresh, showToast, fieldConfig, onDeleteAll }
           onDelete={() => deleteOne(selectedCard.id)}
           onRefresh={() => { setSelectedCard(null); onRefresh(); }}
           showToast={showToast}
+          authFetch={authFetch}
         />
       )}
     </div>
@@ -1095,13 +1103,13 @@ function StatsTab({ cards }) {
 }
 
 // ── SettingsTab ───────────────────────────────────────────────────────────────
-function SettingsTab({ fieldConfig, onFieldConfigUpdate, showToast, onDeleteAll, cardCount }) {
+function SettingsTab({ fieldConfig, onFieldConfigUpdate, showToast, onDeleteAll, cardCount, authFetch }) {
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const handleSave = fields => {
     setSaving(true);
-    fetch("/field-config", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({fields}) })
+    authFetch("/field-config", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({fields}) })
       .then(r => r.json())
       .then(res => { setSaving(false); if (res.success) { onFieldConfigUpdate(fields); showToast("Settings saved!"); } else showToast("Save failed"); })
       .catch(() => { setSaving(false); showToast("Network error"); });
@@ -1142,12 +1150,12 @@ function SettingsTab({ fieldConfig, onFieldConfigUpdate, showToast, onDeleteAll,
 }
 
 // ── OnboardingScreen ──────────────────────────────────────────────────────────
-function OnboardingScreen({ onComplete, showToast }) {
+function OnboardingScreen({ onComplete, showToast, authFetch }) {
   const [saving, setSaving] = useState(false);
 
   const handleSave = fields => {
     setSaving(true);
-    fetch("/field-config", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({fields}) })
+    authFetch("/field-config", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({fields}) })
       .then(r => r.json())
       .then(res => { setSaving(false); if (res.success) onComplete(fields); else showToast("Save failed"); })
       .catch(() => { setSaving(false); showToast("Network error"); });
@@ -1181,37 +1189,138 @@ function execCopy(text, showToast) {
   showToast(ok ? "Copied! Paste into Google Sheets or Excel." : "Use Export File instead.");
 }
 
+// ── LoginScreen ───────────────────────────────────────────────────────────────
+function LoginScreen() {
+  const [mode, setMode] = useState("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [message, setMessage] = useState(null);
+
+  const submit = async () => {
+    if (!email || !password) { setError("Email and password required"); return; }
+    setLoading(true); setError(null); setMessage(null);
+    try {
+      if (mode === "signup") {
+        const { error } = await supabaseClient.auth.signUp({ email, password });
+        if (error) throw error;
+        setMessage("Check your email to confirm your account.");
+      } else {
+        const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#09090b] flex items-center justify-center px-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="w-14 h-14 bg-indigo-500/20 border border-indigo-500/30 rounded-2xl flex items-center justify-center mx-auto mb-5">
+            <Icon name="camera" size={26} className="text-indigo-400" />
+          </div>
+          <h1 className="text-2xl font-bold">
+            <span className="text-[#fafafa]">Card</span><span className="text-indigo-400">Scanner</span>
+          </h1>
+          <p className="text-sm text-[#a1a1aa] mt-1">
+            {mode === "signin" ? "Sign in to your collection" : "Create your account"}
+          </p>
+        </div>
+        <div className="bg-[#18181b] border border-[#3f3f46] rounded-2xl p-6 space-y-4">
+          <div className="space-y-3">
+            <div>
+              <label className="text-[10px] font-semibold text-[#a1a1aa] uppercase tracking-wider block mb-1">Email</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                placeholder="you@email.com"
+                className="w-full bg-[#27272a] border border-[#3f3f46] rounded-lg px-3 py-2.5 text-sm text-[#fafafa] placeholder-[#52525b] outline-none focus:border-indigo-500 transition-colors" />
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold text-[#a1a1aa] uppercase tracking-wider block mb-1">Password</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                placeholder="••••••••"
+                onKeyDown={e => e.key === "Enter" && submit()}
+                className="w-full bg-[#27272a] border border-[#3f3f46] rounded-lg px-3 py-2.5 text-sm text-[#fafafa] placeholder-[#52525b] outline-none focus:border-indigo-500 transition-colors" />
+            </div>
+          </div>
+          {error && <p className="text-xs text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">{error}</p>}
+          {message && <p className="text-xs text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 rounded-lg px-3 py-2">{message}</p>}
+          <Btn variant="primary" size="lg" onClick={submit} disabled={loading}>
+            {loading ? "Loading…" : mode === "signin" ? "Sign In" : "Create Account"}
+          </Btn>
+          <button onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(null); setMessage(null); }}
+            className="w-full text-center text-xs text-[#a1a1aa] hover:text-[#fafafa] transition-colors py-1">
+            {mode === "signin" ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Tab name map ──────────────────────────────────────────────────────────────
 const TAB_LABELS = { scan: "Scan", collection: "Collection", stats: "Stats", settings: "Settings" };
 
 // ── App ───────────────────────────────────────────────────────────────────────
 function App() {
+  const [session, setSession] = useState(undefined); // undefined=loading, null=signed out
   const [tab, setTab] = useState("scan");
   const [cards, setCards] = useState([]);
   const [fieldConfig, setFieldConfig] = useState(null);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [toast, setToast] = useState(null);
 
-  const fetchCards = useCallback(() => {
-    fetch("/cards").then(r => r.json()).then(setCards).catch(() => {});
+  useEffect(() => {
+    supabaseClient.auth.getSession().then(({ data: { session } }) => setSession(session));
+    const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (!session) { setFieldConfig(null); setConfigLoaded(false); setCards([]); }
+    });
+    return () => subscription.unsubscribe();
   }, []);
+
+  const getToken = useCallback(() => session?.access_token || "", [session]);
+
+  const authFetch = useCallback((url, opts = {}) => {
+    const token = session?.access_token;
+    const authHeader = token ? { "Authorization": `Bearer ${token}` } : {};
+    return fetch(url, { ...opts, headers: { ...authHeader, ...opts.headers } });
+  }, [session]);
+
+  const fetchCards = useCallback(() => {
+    authFetch("/cards").then(r => r.json()).then(setCards).catch(() => {});
+  }, [authFetch]);
 
   const fetchConfig = useCallback(() => {
-    fetch("/field-config").then(r => r.json())
+    authFetch("/field-config").then(r => r.json())
       .then(data => { setFieldConfig(data.config); setConfigLoaded(true); })
       .catch(() => setConfigLoaded(true));
-  }, []);
+  }, [authFetch]);
 
-  useEffect(() => { fetchConfig(); fetchCards(); }, [fetchConfig, fetchCards]);
+  useEffect(() => {
+    if (session) { fetchConfig(); fetchCards(); }
+  }, [session, fetchConfig, fetchCards]);
 
   const showToast = useCallback(msg => setToast(msg), []);
 
   const deleteAll = useCallback(() => {
-    fetch("/delete-all", { method: "DELETE" })
+    authFetch("/delete-all", { method: "DELETE" })
       .then(r => r.json())
       .then(() => { fetchCards(); showToast("All cards deleted"); })
       .catch(() => showToast("Network error"));
-  }, [fetchCards, showToast]);
+  }, [authFetch, fetchCards, showToast]);
+
+  if (session === undefined) return (
+    <div className="min-h-screen bg-[#09090b] flex items-center justify-center">
+      <div className="w-8 h-8 border-2 border-[#3f3f46] border-t-indigo-500 rounded-full animate-spin" />
+    </div>
+  );
+
+  if (!session) return <LoginScreen />;
 
   if (!configLoaded) return (
     <div className="min-h-screen bg-[#09090b] flex items-center justify-center">
@@ -1221,7 +1330,7 @@ function App() {
 
   if (!fieldConfig) return (
     <>
-      <OnboardingScreen onComplete={fields => { setFieldConfig(fields); fetchCards(); }} showToast={showToast} />
+      <OnboardingScreen onComplete={fields => { setFieldConfig(fields); fetchCards(); }} showToast={showToast} authFetch={authFetch} />
       <Toast message={toast} onDone={() => setToast(null)} />
     </>
   );
@@ -1240,14 +1349,18 @@ function App() {
         <div className="flex-1">
           <span className="text-[#fafafa] font-bold text-base">Card</span><span className="text-indigo-400 font-bold text-base">Scanner</span>
         </div>
-        <span className="text-xs text-[#52525b] font-medium">{TAB_LABELS[tab]}</span>
+        <span className="text-xs text-[#52525b] font-medium mr-3">{TAB_LABELS[tab]}</span>
+        <button onClick={() => supabaseClient.auth.signOut()}
+          className="text-xs text-[#71717a] hover:text-[#a1a1aa] transition-colors px-2 py-1 rounded-lg">
+          Sign out
+        </button>
       </header>
 
       <div className="min-h-screen pt-14">
-        {tab === "scan"       && <ScanTab onCollectionUpdate={fetchCards} showToast={showToast} existingCards={cards} fieldConfig={fieldConfig} />}
-        {tab === "collection" && <CollectionTab cards={cards} onRefresh={fetchCards} showToast={showToast} fieldConfig={fieldConfig} onDeleteAll={deleteAll} />}
+        {tab === "scan"       && <ScanTab onCollectionUpdate={fetchCards} showToast={showToast} existingCards={cards} fieldConfig={fieldConfig} authFetch={authFetch} />}
+        {tab === "collection" && <CollectionTab cards={cards} onRefresh={fetchCards} showToast={showToast} fieldConfig={fieldConfig} onDeleteAll={deleteAll} authFetch={authFetch} getToken={getToken} />}
         {tab === "stats"      && <StatsTab cards={cards} />}
-        {tab === "settings"   && <SettingsTab fieldConfig={fieldConfig} onFieldConfigUpdate={setFieldConfig} showToast={showToast} onDeleteAll={deleteAll} cardCount={cards.length} />}
+        {tab === "settings"   && <SettingsTab fieldConfig={fieldConfig} onFieldConfigUpdate={setFieldConfig} showToast={showToast} onDeleteAll={deleteAll} cardCount={cards.length} authFetch={authFetch} />}
       </div>
       <nav className="fixed bottom-0 left-0 right-0 bg-[#18181b]/95 backdrop-blur border-t border-[#3f3f46] z-40">
         <div className="max-w-2xl mx-auto flex">

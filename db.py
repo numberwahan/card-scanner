@@ -28,19 +28,27 @@ def get_client() -> Client:
     if _client is None:
         url = os.environ.get("SUPABASE_URL", "")
         key = os.environ.get("SUPABASE_SECRET_KEY", "")
-        print(f"[db] SUPABASE_URL={'SET('+url[:20]+')' if url else 'MISSING'}")
-        print(f"[db] SUPABASE_SECRET_KEY={'SET' if key else 'MISSING'}")
         _client = create_client(url, key)
     return _client
 
 
-# ── Field config ──────────────────────────────────────────────────────────────
-
-def get_field_config() -> list | None:
-    """Returns saved config or None if never configured (triggers onboarding)."""
+def verify_token(token: str) -> str | None:
+    """Verify a Supabase access token and return the user_id (sub), or None."""
     try:
         sb = get_client()
-        result = sb.table("field_config").select("fields").eq("id", 1).execute()
+        response = sb.auth.get_user(token)
+        return response.user.id if response.user else None
+    except Exception as e:
+        print(f"[auth] verify_token: {e}")
+        return None
+
+
+# ── Field config ──────────────────────────────────────────────────────────────
+
+def get_field_config(user_id: str) -> list | None:
+    try:
+        sb = get_client()
+        result = sb.table("field_config").select("fields").eq("user_id", user_id).execute()
         if result.data:
             return result.data[0]["fields"]
         return None
@@ -49,10 +57,10 @@ def get_field_config() -> list | None:
         return None
 
 
-def save_field_config(fields: list) -> bool:
+def save_field_config(fields: list, user_id: str) -> bool:
     try:
         sb = get_client()
-        sb.table("field_config").upsert({"id": 1, "fields": fields}).execute()
+        sb.table("field_config").upsert({"user_id": user_id, "fields": fields}).execute()
         return True
     except Exception as e:
         print(f"[db] save_field_config: {e}")
@@ -61,20 +69,21 @@ def save_field_config(fields: list) -> bool:
 
 # ── Cards ─────────────────────────────────────────────────────────────────────
 
-def get_all_cards() -> list[dict]:
+def get_all_cards(user_id: str) -> list[dict]:
     try:
         sb = get_client()
-        result = sb.table("cards").select("*").order("created_at").execute()
+        result = sb.table("cards").select("*").eq("user_id", user_id).order("created_at").execute()
         return result.data or []
     except Exception as e:
         print(f"[db] get_all_cards: {e}")
         return []
 
 
-def insert_card(data: dict) -> dict | None:
+def insert_card(data: dict, user_id: str) -> dict | None:
     try:
         sb = get_client()
         row = {
+            "user_id":        user_id,
             "grader":         data.get("grader"),
             "grade":          data.get("grade"),
             "cert_number":    data.get("cert_number"),
@@ -95,40 +104,40 @@ def insert_card(data: dict) -> dict | None:
         return None
 
 
-def update_card(card_id: int, fields: dict) -> bool:
+def update_card(card_id: int, fields: dict, user_id: str) -> bool:
     try:
         sb = get_client()
-        sb.table("cards").update(fields).eq("id", card_id).execute()
+        sb.table("cards").update(fields).eq("id", card_id).eq("user_id", user_id).execute()
         return True
     except Exception as e:
         print(f"[db] update_card: {e}")
         return False
 
 
-def delete_card(card_id: int) -> bool:
+def delete_card(card_id: int, user_id: str) -> bool:
     try:
         sb = get_client()
-        sb.table("cards").delete().eq("id", card_id).execute()
+        sb.table("cards").delete().eq("id", card_id).eq("user_id", user_id).execute()
         return True
     except Exception as e:
         print(f"[db] delete_card: {e}")
         return False
 
 
-def delete_all_cards() -> bool:
+def delete_all_cards(user_id: str) -> bool:
     try:
         sb = get_client()
-        sb.table("cards").delete().neq("id", 0).execute()
+        sb.table("cards").delete().eq("user_id", user_id).execute()
         return True
     except Exception as e:
         print(f"[db] delete_all_cards: {e}")
         return False
 
 
-def count_cards() -> int:
+def count_cards(user_id: str) -> int:
     try:
         sb = get_client()
-        result = sb.table("cards").select("id", count="exact").execute()
+        result = sb.table("cards").select("id", count="exact").eq("user_id", user_id).execute()
         return result.count or 0
     except Exception:
         return 0
